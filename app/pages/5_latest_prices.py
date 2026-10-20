@@ -1,9 +1,14 @@
 import plotly.express as px
 import streamlit as st
-from utils import DISCLAIMER, cluster_today, header, kpi_cards, latest_snapshot, load_clean, show
+from utils import (DISCLAIMER, cluster_today, header, kpi_cards, latest_snapshot,
+                   load_clean_live, refresh_live, show)
 
 header("Latest Prices", "Which markets are unusually high or low compared with their own recent prices?")
-df = load_clean()
+if st.sidebar.button("Refresh latest prices"):
+    refresh_live()
+df, live_err = load_clean_live()
+if live_err:
+    st.warning(f"Could not fetch live prices ({live_err}). Showing the last saved data instead.")
 crop = st.sidebar.selectbox("Crop", sorted(df["commodity"].unique()))
 window = st.sidebar.slider("Comparison window (days)", 14, 60, 30)
 full = df[df["commodity"] == crop]
@@ -24,7 +29,7 @@ kpi_cards([("Latest date", f"{last:%d %b %Y}", crop),
            ("Above own average", int((out["z_score"] > 1).sum()), "z > 1"),
            ("Below own average", int((out["z_score"] < -1).sum()), "z < -1")])
 st.caption("Each market is compared with its own previous days; markets that did not report are not filled in. "
-           "Shows the newest date in your data until live records are added to clean.csv.")
+           "Recent records are fetched live from data.gov.in and cached for an hour.")
 if u is None:
     st.warning("Fewer than 5 markets have enough history for clustering; showing the table only.")
 else:

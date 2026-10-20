@@ -29,8 +29,9 @@ def normalize_market(name: str) -> str:
     return MARKET_ALIASES.get(s, s)
 
 
-def main():
-    df = load_raw(RAW_FILE)
+def clean_frame(df: pd.DataFrame):
+    """Clean a raw dataframe (CSV or API rows). Returns (daily, report, unmapped)."""
+    df = df.copy()
     report = {"raw rows": len(df)}
 
     df.columns = [c.strip().lower() for c in df.columns]
@@ -77,6 +78,12 @@ def main():
         .reset_index()
     )
     report["daily market-crop rows"] = len(daily)
+    return daily, report, unmapped
+
+
+def main():
+    df = load_raw(RAW_FILE)
+    daily, report, unmapped = clean_frame(df)
 
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     daily.to_csv(OUT_FILE, index=False)

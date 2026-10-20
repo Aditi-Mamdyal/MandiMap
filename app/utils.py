@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from features import build_profiles  # noqa: E402
 import clustering as cl  # noqa: E402
+from live import fetch_recent_pune, merge_live  # noqa: E402
 
 DISCLAIMER = ("Descriptive analysis of reported historical prices. It is not a forecast, and a "
               "higher average price does not make a market the best place to sell: transport, "
@@ -63,6 +64,24 @@ def load_clean():
     return pd.read_csv(ROOT / "data" / "processed" / "clean.csv", parse_dates=["date"])
 
 
+@st.cache_data(ttl=3600, show_spinner="Fetching latest prices from data.gov.in...")
+def _live_raw():
+    return fetch_recent_pune()
+
+
+def load_clean_live():
+    """clean.csv + the latest records from the API. Returns (df, error_message_or_None)."""
+    base = load_clean()
+    try:
+        return merge_live(base, _live_raw()), None
+    except Exception as e:                  # no internet, bad key, API down...
+        return base, f"{type(e).__name__}: {e}"
+
+
+def refresh_live():
+    _live_raw.clear()
+
+
 @st.cache_data
 def profiles_for(d, start, end, min_obs):
     return build_profiles(d, start, end, min_obs)
@@ -74,17 +93,19 @@ def sidebar_filters():
     crop = st.sidebar.selectbox("Crop", sorted(df["commodity"].unique()))
     full = df[df["commodity"] == crop]
     lo, hi = full["date"].min().date(), full["date"].max().date()
-    rng = st.sidebar.date_input("Period", (lo, hi), min_value=lo, max_value=hi)
-    if len(rng) != 2:
-        st.info("Pick an end date to continue.")
+    st.sidebar.markdown("**Period**")
+    c1, c2 = st.sidebar.columns(2)
+    start_d = c1.date_input("From", lo, min_value=lo, max_value=hi, format="DD/MM/YYYY")
+    end_d = c2.date_input("To", hi, min_value=lo, max_value=hi, format="DD/MM/YYYY")
+    if start_d > end_d:
+        st.sidebar.error("'From' must be on or before 'To'.")
         st.stop()
-    start, end = pd.Timestamp(rng[0]), pd.Timestamp(rng[1])
+    start, end = pd.Timestamp(start_d), pd.Timestamp(end_d)
     d = full[(full["date"] >= start) & (full["date"] <= end)]
     if d.empty:
         st.warning("No data for this selection.")
         st.stop()
     return crop, full, d, (start, end)
-
 
 def level(z, low, mid, high, cut=0.5):
     if pd.isna(z):
