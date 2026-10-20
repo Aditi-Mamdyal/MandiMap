@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 from features import build_profiles  # noqa: E402
 import clustering as cl  # noqa: E402
-from live import fetch_recent_pune, merge_live  # noqa: E402
+from live import add_history, fetch_recent_pune, merge_live, update_history  # noqa: E402
 
 DISCLAIMER = ("Descriptive analysis of reported historical prices. It is not a forecast, and a "
               "higher average price does not make a market the best place to sell: transport, "
@@ -61,13 +61,16 @@ def show(fig, height=340):
 
 @st.cache_data
 def load_clean():
-    return pd.read_csv(ROOT / "data" / "processed" / "clean.csv", parse_dates=["date"])
+    base = pd.read_csv(ROOT / "data" / "processed" / "clean.csv", parse_dates=["date"])
+    return add_history(base)          # + every day saved from the API so far
 
 
 @st.cache_data(ttl=3600, show_spinner="Fetching latest prices from data.gov.in...")
 def _live_raw():
-    return fetch_recent_pune()
-
+    raw = fetch_recent_pune()
+    if update_history(raw):           # save to live_history.csv so tomorrow's page still has today
+        load_clean.clear()            # make every page re-read clean.csv + saved history
+    return raw
 
 def load_clean_live():
     """clean.csv + the latest records from the API. Returns (df, error_message_or_None)."""
@@ -113,9 +116,12 @@ def level(z, low, mid, high, cut=0.5):
     return high if z > cut else low if z < -cut else mid
 
 
-def latest_snapshot(full, window=30, min_hist=10):
-    """Latest reported day per market vs that market's own previous `window` days."""
-    last = full["date"].max()
+def latest_snapshot(full, window=30, min_hist=10, min_markets=5):
+    """Latest day with at least `min_markets` reporting (else the crop's newest day),
+    compared per market with its own previous `window` days."""
+    per_day = full.groupby("date")["market"].nunique()
+    enough = per_day[per_day >= min_markets]
+    last = enough.index.max() if len(enough) else full["date"].max()
     today = full[full["date"] == last]
     hist = full[(full["date"] < last) & (full["date"] >= last - pd.Timedelta(days=window))]
     stats = hist.groupby("market")["modal_price"].agg(hist_mean="mean", hist_std="std", hist_n="count")

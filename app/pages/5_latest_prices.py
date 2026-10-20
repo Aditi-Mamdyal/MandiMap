@@ -1,3 +1,4 @@
+import pandas as pd
 import plotly.express as px
 import streamlit as st
 from utils import (DISCLAIMER, cluster_today, header, kpi_cards, latest_snapshot,
@@ -9,7 +10,12 @@ if st.sidebar.button("Refresh latest prices"):
 df, live_err = load_clean_live()
 if live_err:
     st.warning(f"Could not fetch live prices ({live_err}). Showing the last saved data instead.")
-crop = st.sidebar.selectbox("Crop", sorted(df["commodity"].unique()))
+# crops with the most markets reporting in the last 7 days come first, so the page opens on a useful one
+recent = df[df["date"] >= df["date"].max() - pd.Timedelta(days=7)]
+n_recent = recent.groupby("commodity")["market"].nunique().sort_index().sort_values(ascending=False, kind="stable")
+crops = list(n_recent.index) + sorted(set(df["commodity"]) - set(n_recent.index))
+crop = st.sidebar.selectbox("Crop", crops,
+                            format_func=lambda c: f"{c} ({n_recent.get(c, 0)} markets, last 7 days)")
 window = st.sidebar.slider("Comparison window (days)", 14, 60, 30)
 full = df[df["commodity"] == crop]
 
@@ -17,7 +23,13 @@ last, t = latest_snapshot(full, window=window)
 if t.empty:
     st.warning("No records on the latest date.")
     st.stop()
+newest = full["date"].max()
+if last < newest:
+    n_new = full.loc[full["date"] == newest, "market"].nunique()
+    st.info(f"Only {n_new} market(s) reported on {newest:%d %b %Y} so far, so this shows {last:%d %b %Y}, "
+            "the latest day with at least 5 markets reporting.")
 u, info = cluster_today(t)
+# ... everything from here down (out = t.copy(), KPI cards, charts, table) is unchanged
 out = t.copy()
 out["group"] = "not enough history"
 if u is not None:

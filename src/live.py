@@ -1,5 +1,6 @@
 import os
 import time
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -8,6 +9,9 @@ from dotenv import load_dotenv
 from clean import clean_frame
 
 load_dotenv()
+ROOT = Path(__file__).resolve().parent.parent
+HISTORY_FILE = ROOT / "data" / "processed" / "live_history.csv"
+KEY = ["date", "market", "commodity"]
 API_KEY = os.getenv("DATA_GOV_API_KEY")
 # Current Daily Price of Various Commodities from Various Markets (Mandi)
 RESOURCE_ID = "9ef84268-d588-465a-a308-a864a43d0070"
@@ -65,6 +69,30 @@ def fetch_recent_pune() -> pd.DataFrame:
     return df
 
 
+def update_history(live_raw: pd.DataFrame) -> int:
+    """Clean the live rows and save them into live_history.csv. New days are added;
+    a day fetched again (e.g. a partial day completed later) is replaced. Returns rows saved."""
+    if live_raw is None or live_raw.empty:
+        return 0
+    daily, _, _ = clean_frame(live_raw)
+    daily["date"] = pd.to_datetime(daily["date"])
+    if HISTORY_FILE.exists():
+        daily = pd.concat([pd.read_csv(HISTORY_FILE, parse_dates=["date"]), daily], ignore_index=True)
+    daily = daily.drop_duplicates(subset=KEY, keep="last").sort_values(KEY)
+    HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    daily.to_csv(HISTORY_FILE, index=False)
+    return len(daily)
+
+
+def add_history(clean_df: pd.DataFrame) -> pd.DataFrame:
+    """clean.csv data + everything saved in live_history.csv (history file wins on overlap)."""
+    if not HISTORY_FILE.exists():
+        return clean_df
+    hist = pd.read_csv(HISTORY_FILE, parse_dates=["date"])
+    out = pd.concat([clean_df, hist], ignore_index=True).drop_duplicates(subset=KEY, keep="last")
+    return out.sort_values(KEY).reset_index(drop=True)
+
+
 def merge_live(clean_df: pd.DataFrame, live_raw: pd.DataFrame) -> pd.DataFrame:
     """Clean the live rows like the CSV rows and add them to clean.csv's data.
     Where a day/market/crop exists in both, the live version wins."""
@@ -82,5 +110,6 @@ if __name__ == "__main__":          # self-test: python src/live.py
     print("rows:", len(df))
     print("columns:", list(df.columns))
     if not df.empty:
+        print("saved to live_history.csv, total rows there:", update_history(df))
         print("dates:", sorted(df["arrival_date"].unique()))
         print(df.head().to_string())
